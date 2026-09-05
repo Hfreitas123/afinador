@@ -2,7 +2,7 @@
 'use strict';
 
 (function () {
-  const VERSION = '1.0.0';
+  const VERSION = '1.0.1';
   const $ = (sel) => document.querySelector(sel);
 
   /* ---------- Estado ---------- */
@@ -203,7 +203,7 @@
 
   /* ---------- Áudio ---------- */
   let audioCtx = null, analyser = null, stream = null, sourceNode = null, demoOsc = null;
-  let detector = null, buf = null, rafId = 0, lastDetect = 0;
+  let detector = null, buf = null, byteBuf = null, rafId = 0, lastDetect = 0, silentSink = null, silentFrames = 0;
   const smoother = new MedianSmoother(5);
   let lastGoodAt = 0, lastReading = null, okStreak = 0, dingPlayedFor = -1;
   const demoParam = new URLSearchParams(location.search).get('demo');
@@ -222,15 +222,41 @@
     smoother.reset();
   }
 
+  /** Cria o AudioContext (tem de acontecer dentro do toque do utilizador, por causa do iOS). */
+  function ensureContext() {
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      // O iOS marca o contexto como "interrupted"/"suspended" quando o microfone arranca
+      // ou quando a app volta do segundo plano; retomamos sempre que isso acontecer.
+      audioCtx.addEventListener?.('statechange', () => {
+        if (state.running && audioCtx.state !== 'running') audioCtx.resume().catch(() => {});
+      });
+    }
+    return audioCtx;
+  }
+
   async function start() {
     const hint = $('#hint');
     hint.classList.remove('error');
     try {
-      audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+      ensureContext();
       await audioCtx.resume();
+      if (demoParam === null) {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+        });
+      }
+      // Depois de obter o microfone o iOS pode ter suspendido o contexto: retomar de novo.
+      if (audioCtx.state !== 'running') await audioCtx.resume();
+
       analyser = audioCtx.createAnalyser();
       analyser.fftSize = 4096;
       analyser.smoothingTimeConstant = 0;
+      // O Safari só processa nós que cheguem ao destino: liga o analisador a um ganho mudo.
+      silentSink = audioCtx.createGain();
+      silentSink.gain.value = 0;
+      analyser.connect(silentSink).connect(audioCtx.destination);
+
       if (demoParam !== null) {
         demoOsc = audioCtx.createOscillator();
         demoOsc.type = 'sawtooth';
@@ -241,17 +267,17 @@
         window.__setDemoFreq = (f) => { demoOsc.frequency.value = f; };
         hint.textContent = `Modo demo: sinal sintético de ${demoOsc.frequency.value} Hz.`;
       } else {
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-        });
         sourceNode = audioCtx.createMediaStreamSource(stream);
         sourceNode.connect(analyser);
+        stream.getAudioTracks().forEach((t) => { t.onended = () => { if (state.running) { stop(); hint.textContent = 'O microfone foi desligado pelo sistema. Toca em Iniciar outra vez.'; } }; });
         hint.textContent = 'A ouvir… toca uma corda de cada vez.';
       }
       buf = new Float32Array(analyser.fftSize);
+      byteBuf = analyser.getFloatTimeDomainData ? null : new Uint8Array(analyser.fftSize);
       rebuildDetector();
       state.running = true;
       state.tunedFlags = [];
+      silentFrames = 0;
       $('#btn-start').textContent = '■ Parar';
       $('#btn-start').classList.add('running');
       requestWakeLock();
@@ -278,6 +304,8 @@
     if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }
     if (sourceNode) { try { sourceNode.disconnect(); } catch (e) {} sourceNode = null; }
     if (demoOsc) { try { demoOsc.stop(); demoOsc.disconnect(); } catch (e) {} demoOsc = null; }
+    if (silentSink) { try { silentSink.disconnect(); } catch (e) {} silentSink = null; }
+    setLevel(0);
     releaseWakeLock();
     $('#btn-start').textContent = '🎤 Iniciar afinador';
     $('#btn-start').classList.remove('running');
@@ -292,10 +320,22 @@
     const now = performance.now();
     if (now - lastDetect < 30) return;
     lastDetect = now;
-    analyser.getFloatTimeDomainData(buf);
+    if (byteBuf) {
+      analyser.getByteTimeDomainData(byteBuf);
+      for (let i = 0; i < byteBuf.length; i++) buf[i] = (byteBuf[i] - 128) / 128;
+    } else analyser.getFloatTimeDomainData(buf);
     if (tonePlaying) return; // não analisar enquanto toca a nota de referência
     const res = detector.detect(buf);
-    const good = res.freq > 0 && res.rms >= rmsThreshold() && res.probability >= 0.7;
+    setLevel(res.rms);
+    // Diagnóstico: se o contexto adormeceu ou o sinal é sempre zero absoluto, avisar
+    if (res.rms === 0) {
+      silentFrames++;
+      if (silentFrames === 60) {
+        if (audioCtx.state !== 'running') audioCtx.resume().catch(() => {});
+        $('#hint').textContent = 'Não chega som do microfone. Verifica se outra app o está a usar e se o Safari tem permissão (Definições → Safari → Microfone).';
+      }
+    } else if (silentFrames) { silentFrames = 0; if (demoParam === null) $('#hint').textContent = 'A ouvir… toca uma corda de cada vez.'; }
+    const good = res.freq > 0 && res.rms >= rmsThreshold() && res.probability >= 0.65;
     if (good) {
       const midiFloat = smoother.push(freqToMidiFloat(res.freq, state.settings.a4));
       const tg = targets();
@@ -327,10 +367,25 @@
     drawHistory();
   }
 
+  /* ---------- Medidor de nível de entrada ---------- */
+  const levelBar = $('#level-bar');
+  let levelShown = 0;
+  function setLevel(rms) {
+    // escala logarítmica: -60 dB .. 0 dB
+    const db = rms > 0 ? 20 * Math.log10(rms) : -100;
+    const pct = Math.max(0, Math.min(100, (db + 60) / 60 * 100));
+    levelShown = pct > levelShown ? pct : levelShown * 0.8 + pct * 0.2; // sobe rápido, desce devagar
+    levelBar.style.width = levelShown.toFixed(1) + '%';
+    const thr = rmsThreshold();
+    const thrPct = Math.max(0, Math.min(100, (20 * Math.log10(thr) + 60) / 60 * 100));
+    levelBar.parentElement.style.setProperty('--thr', thrPct.toFixed(1) + '%');
+    levelBar.classList.toggle('above', rms >= thr);
+  }
+
   /* ---------- Nota de referência ---------- */
   let tonePlaying = false, toneTimer = 0;
   function playTone(freq, duration = 1.6) {
-    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    ensureContext();
     audioCtx.resume();
     const t0 = audioCtx.currentTime;
     const master = audioCtx.createGain();
@@ -353,7 +408,7 @@
     toneTimer = setTimeout(() => { tonePlaying = false; smoother.reset(); }, duration * 1000 + 150);
   }
   function playDing() {
-    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    ensureContext();
     const t0 = audioCtx.currentTime;
     const o = audioCtx.createOscillator(); o.frequency.value = 1320;
     const g = audioCtx.createGain();

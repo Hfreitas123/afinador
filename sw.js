@@ -1,5 +1,5 @@
 /* Service worker: guarda a aplicação em cache para funcionar offline. */
-const CACHE = 'afinador-v1.0.0';
+const CACHE = 'afinador-v1.0.1';
 const ASSETS = ['./', './index.html', './style.css', './app.js', './pitch.js', './tunings.js',
   './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
