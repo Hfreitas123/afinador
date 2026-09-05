@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="pt-PT">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <title>Afinador</title>
+  <meta name="description" content="Afinador cromático para guitarra, baixo, ukulele e mais, com afinações personalizadas. Funciona no Safari do iPhone.">
+  <meta name="theme-color" content="#0f1420">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Afinador">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app" id="app">
+
+    <header class="topbar">
+      <button class="chip" id="btn-instrument" aria-haspopup="dialog">
+        <span class="chip-icon" id="instrument-icon">🎸</span>
+        <span class="chip-text"><small>Instrumento</small><strong id="instrument-name">Guitarra</strong></span>
+        <span class="chip-caret">▾</span>
+      </button>
+      <button class="chip" id="btn-tuning" aria-haspopup="dialog">
+        <span class="chip-text"><small>Afinação</small><strong id="tuning-name">Standard</strong></span>
+        <span class="chip-caret">▾</span>
+      </button>
+      <button class="iconbtn" id="btn-settings" aria-label="Definições">⚙︎</button>
+    </header>
+
+    <main class="stage">
+      <div class="status-line">
+        <span class="mode-badge" id="mode-badge">Auto</span>
+        <span class="detected" id="detected-note"></span>
+      </div>
+
+      <section class="gauge-wrap" aria-live="polite">
+        <svg class="gauge" viewBox="0 0 320 190" id="gauge">
+          <defs>
+            <linearGradient id="arcgrad" x1="0" x2="1">
+              <stop offset="0" stop-color="var(--flat)"/>
+              <stop offset="0.5" stop-color="var(--ok)"/>
+              <stop offset="1" stop-color="var(--sharp)"/>
+            </linearGradient>
+          </defs>
+          <path class="arc-bg" d="M 30 170 A 130 130 0 0 1 290 170"/>
+          <path class="arc-ok" id="arc-ok" d=""/>
+          <g class="ticks" id="ticks"></g>
+          <g class="labels" font-size="11">
+            <text x="22" y="186">−50</text>
+            <text x="160" y="24" text-anchor="middle">0</text>
+            <text x="298" y="186" text-anchor="end">+50</text>
+          </g>
+          <g id="needle" class="needle">
+            <line x1="160" y1="170" x2="160" y2="52"/>
+            <circle cx="160" cy="170" r="7"/>
+          </g>
+        </svg>
+
+        <div class="readout">
+          <div class="note" id="note-display"><span class="note-name" id="note-name">–</span><sup class="note-octave" id="note-octave"></sup></div>
+          <div class="cents" id="cents-display">Toca uma corda</div>
+          <div class="freq" id="freq-display">— Hz</div>
+        </div>
+      </section>
+
+      <canvas class="history" id="history" width="640" height="90" aria-hidden="true"></canvas>
+
+      <section class="strings" id="strings"></section>
+
+      <div class="controls">
+        <button class="pill" id="btn-auto">Auto</button>
+        <button class="pill" id="btn-play" title="Tocar nota de referência">▶ Ouvir nota</button>
+      </div>
+    </main>
+
+    <footer class="bottombar">
+      <button class="bigbtn" id="btn-start">🎤 Iniciar afinador</button>
+      <p class="hint" id="hint">Toca em Iniciar e permite o acesso ao microfone.</p>
+    </footer>
+  </div>
+
+  <!-- Folhas (modais) -->
+  <div class="sheet-backdrop" id="backdrop" hidden></div>
+
+  <section class="sheet" id="sheet-instrument" hidden role="dialog" aria-label="Escolher instrumento">
+    <header><h2>Instrumento</h2><button class="close" data-close>✕</button></header>
+    <ul class="list" id="instrument-list"></ul>
+  </section>
+
+  <section class="sheet" id="sheet-tuning" hidden role="dialog" aria-label="Escolher afinação">
+    <header><h2>Afinação</h2><button class="close" data-close>✕</button></header>
+    <ul class="list" id="tuning-list"></ul>
+    <div class="sheet-actions">
+      <button class="pill primary" id="btn-new-custom">＋ Nova afinação personalizada</button>
+    </div>
+  </section>
+
+  <section class="sheet" id="sheet-custom" hidden role="dialog" aria-label="Afinação personalizada">
+    <header><h2 id="custom-title">Afinação personalizada</h2><button class="close" data-close>✕</button></header>
+    <div class="form">
+      <label class="field"><span>Nome</span><input type="text" id="custom-name" maxlength="40" placeholder="Ex.: A minha afinação"></label>
+      <div class="field row">
+        <span>Número de cordas</span>
+        <div class="stepper">
+          <button id="custom-minus" aria-label="Menos uma corda">−</button>
+          <strong id="custom-count">6</strong>
+          <button id="custom-plus" aria-label="Mais uma corda">＋</button>
+        </div>
+      </div>
+      <p class="muted small">Da corda mais grave (1.ª linha) para a mais aguda. Toca em ▶ para ouvir a nota.</p>
+      <div class="custom-strings" id="custom-strings"></div>
+      <div class="sheet-actions between">
+        <button class="pill danger" id="custom-delete" hidden>Apagar</button>
+        <button class="pill primary" id="custom-save">Guardar</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="sheet" id="sheet-settings" hidden role="dialog" aria-label="Definições">
+    <header><h2>Definições</h2><button class="close" data-close>✕</button></header>
+    <div class="form">
+      <div class="field row">
+        <span>Referência Lá (A4)</span>
+        <div class="stepper">
+          <button id="a4-minus" aria-label="Baixar referência">−</button>
+          <strong><span id="a4-value">440</span> Hz</strong>
+          <button id="a4-plus" aria-label="Subir referência">＋</button>
+        </div>
+      </div>
+      <div class="field row">
+        <span>Transposição<br><small class="muted">semitons aplicados às cordas</small></span>
+        <div class="stepper">
+          <button id="tr-minus" aria-label="Transpor para baixo">−</button>
+          <strong id="tr-value">0</strong>
+          <button id="tr-plus" aria-label="Transpor para cima">＋</button>
+        </div>
+      </div>
+      <label class="field"><span>Sensibilidade do microfone <small class="muted" id="sens-label"></small></span>
+        <input type="range" id="sensitivity" min="0" max="100" step="1"></label>
+      <label class="field"><span>Tolerância "afinado" <small class="muted">± <span id="tol-value">3</span> cents</small></span>
+        <input type="range" id="tolerance" min="1" max="10" step="1"></label>
+      <div class="field row"><span>Notação</span>
+        <div class="seg" id="seg-notation">
+          <button data-v="latin">C D E</button><button data-v="solfege">Dó Ré Mi</button>
+        </div></div>
+      <div class="field row"><span>Acidentes</span>
+        <div class="seg" id="seg-accidentals">
+          <button data-v="sharp">♯</button><button data-v="flat">♭</button>
+        </div></div>
+      <div class="field row"><span>Tema</span>
+        <div class="seg" id="seg-theme">
+          <button data-v="dark">Escuro</button><button data-v="light">Claro</button><button data-v="auto">Auto</button>
+        </div></div>
+      <label class="field row"><span>Manter ecrã ligado</span><input type="checkbox" id="wakelock" checked></label>
+      <label class="field row"><span>Som de confirmação ao afinar</span><input type="checkbox" id="ding"></label>
+      <p class="muted small">Para guardar como app: no Safari toca em Partilhar → <b>Adicionar ao Ecrã Principal</b>. Funciona offline depois da primeira visita.</p>
+      <p class="muted small" id="version"></p>
+    </div>
+  </section>
+
+  <script src="tunings.js"></script>
+  <script src="pitch.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
