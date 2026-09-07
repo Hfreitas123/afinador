@@ -2,7 +2,7 @@
 'use strict';
 
 (function () {
-  const VERSION = '1.0.1';
+  const VERSION = '1.0.2';
   const $ = (sel) => document.querySelector(sel);
 
   /* ---------- Estado ---------- */
@@ -131,6 +131,19 @@
     $('#instrument-icon').textContent = inst.icon;
     $('#instrument-name').textContent = inst.name;
     $('#tuning-name').textContent = t.name + (state.settings.transpose ? ` (${state.settings.transpose > 0 ? '+' : ''}${state.settings.transpose})` : '');
+    const warnEl = $('#tuning-warn');
+    warnEl.hidden = !t.warn;
+    warnEl.classList.remove('open');
+    if (t.warn) {
+      // primeira frase sempre visível; o resto abre com "Ver mais"
+      const cut = t.warn.indexOf('. ');
+      const short = cut > 0 ? t.warn.slice(0, cut + 1) : t.warn;
+      const rest = cut > 0 ? t.warn.slice(cut + 2) : '';
+      $('#warn-short').textContent = '⚠︎ ' + short;
+      $('#warn-full').textContent = ' ' + rest;
+      $('#warn-toggle').hidden = !rest;
+      $('#warn-toggle').textContent = 'Ver mais';
+    }
     const badge = $('#mode-badge');
     badge.textContent = state.selectedString === null ? 'Auto' : 'Manual';
     badge.classList.toggle('manual', state.selectedString !== null);
@@ -477,12 +490,15 @@
   }
   function renderTuningList() {
     const list = getTunings(state.instrumentId, state.custom);
-    const preset = list.filter((t) => !t.custom), mine = list.filter((t) => t.custom);
+    const preset = list.filter((t) => !t.custom && !t.song);
+    const songs = list.filter((t) => t.song);
+    const mine = list.filter((t) => t.custom);
     const item = (t) => `<li><button class="item ${t.id === state.tuningId ? 'selected' : ''}" data-id="${t.id}">
         <span class="txt"><strong>${t.name}</strong><span>${t.desc}</span></span>
         ${t.custom ? `<span class="edit" data-edit="${t.id}" role="button" aria-label="Editar">✎</span>` : ''}
       </button></li>`;
     let html = preset.map(item).join('');
+    if (songs.length) html += `<li class="section">Afinações de músicas</li>` + songs.map(item).join('');
     if (mine.length) html += `<li class="section">Personalizadas</li>` + mine.map(item).join('');
     $('#tuning-list').innerHTML = html;
     $('#tuning-list').querySelectorAll('.item').forEach((b) => b.addEventListener('click', (ev) => {
@@ -603,6 +619,11 @@
   });
   $('#btn-settings').addEventListener('click', () => { renderSettings(); openSheet('#sheet-settings'); });
   $('#version').textContent = `Afinador v${VERSION}`;
+
+  $('#warn-toggle').addEventListener('click', () => {
+    const open = $('#tuning-warn').classList.toggle('open');
+    $('#warn-toggle').textContent = open ? 'Ver menos' : 'Ver mais';
+  });
 
   /* ---------- Iniciar / parar ---------- */
   $('#btn-start').addEventListener('click', () => (state.running ? stop() : start()));

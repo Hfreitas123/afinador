@@ -33,7 +33,7 @@ function midiToName(midi, notation = 'latin', accidentals = 'sharp') {
   return { name: names[idx].replace('#', '♯').replace(/b$/, '♭'), octave, idx };
 }
 
-const T = (id, name, notes, desc) => ({ id, name, notes, desc });
+const T = (id, name, notes, desc, extra) => Object.assign({ id, name, notes, desc }, extra);
 
 const INSTRUMENTS = [
   {
@@ -58,6 +58,10 @@ const INSTRUMENTS = [
       T('all-fourths', 'Quartas', ['E2', 'A2', 'D3', 'G3', 'C4', 'F4'], 'E A D G C F'),
       T('baritone-b', 'Barítono (B)', ['B1', 'E2', 'A2', 'D3', 'F#3', 'B3'], 'B E A D F♯ B'),
       T('baritone-a', 'Barítono (A)', ['A1', 'D2', 'G2', 'C3', 'E3', 'A3'], 'A D G C E A'),
+      T('iris', 'Iris — Goo Goo Dolls', ['B1', 'D2', 'D3', 'D3', 'D4', 'D4'], 'B D D D D D', {
+        song: true,
+        warn: 'Afinação extrema. A corda mais grave desce 5 semitons até um Si muito grave (John Rzeznik usa uma corda .70) e a segunda mais aguda sobe 3 semitons, com risco de partir. Há duas cordas em Ré3 e duas em Ré4, em uníssono: usa o modo manual para as afinar.',
+      }),
     ],
   },
   {

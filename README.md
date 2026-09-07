@@ -23,6 +23,8 @@ Detecta a corda automaticamente, mostra o desvio em cents e suporta afinações 
   guitarra portuguesa (Lisboa e Coimbra), bandolim, banjo (5 cordas e tenor), violino, viola de arco,
   violoncelo, contrabaixo, charango e balalaika.
 - **Afinações populares** por instrumento (Standard, Drop D, Drop C, meio tom abaixo, DADGAD, Open G/D/E/C/A, etc.).
+- **Afinações de músicas**, num grupo próprio na lista. Inclui a de *Iris* dos Goo Goo Dolls
+  (B1 D2 D3 D3 D4 D4, o famoso «BDDDDD» de John Rzeznik), com aviso sobre a tensão das cordas.
 - **Afinações personalizadas:** escolhes o número de cordas (1 a 12) e a nota e oitava de cada uma.
   Ficam guardadas no dispositivo e podem ser editadas ou apagadas.
 - **Nota de referência:** botão ▶ toca o som da corda para afinares de ouvido.
