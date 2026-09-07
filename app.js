@@ -2,7 +2,7 @@
 'use strict';
 
 (function () {
-  const VERSION = '1.1.0';
+  const VERSION = '1.1.1';
   const SONG_ID = '__song';
   const $ = (sel) => document.querySelector(sel);
 
@@ -819,10 +819,69 @@
   /* ---------- Iniciar / parar ---------- */
   $('#btn-start').addEventListener('click', () => (state.running ? stop() : start()));
 
-  /* ---------- Service worker ---------- */
-  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  /* ---------- Service worker e actualizações ---------- */
+  let swReg = null, reloading = false;
+  // Na primeira visita o service worker assume o controlo (clients.claim) e dispara
+  // "controllerchange". Isso não é uma actualização, por isso não se recarrega nesse caso.
+  const hadController = 'serviceWorker' in navigator && !!navigator.serviceWorker.controller;
+
+  function showUpdateBar(worker) {
+    const bar = $('#update-bar');
+    if (!worker || bar.dataset.armed === '1') return;
+    bar.dataset.armed = '1';
+    bar.hidden = false;
+    document.body.classList.add('has-update');
+    $('#update-now').onclick = () => {
+      $('#update-now').textContent = 'A actualizar…';
+      $('#update-now').disabled = true;
+      worker.postMessage({ type: 'SKIP_WAITING' });
+      // Se o controlo não mudar (por exemplo, sem página controlada), recarrega à mesma.
+      setTimeout(() => { if (!reloading) { reloading = true; location.reload(); } }, 2500);
+    };
   }
+
+  function watchRegistration(reg) {
+    swReg = reg;
+    if (reg.waiting && navigator.serviceWorker.controller) showUpdateBar(reg.waiting);
+    reg.addEventListener('updatefound', () => {
+      const nw = reg.installing;
+      if (!nw) return;
+      nw.addEventListener('statechange', () => {
+        // Só avisa se já havia uma versão instalada: na primeira visita não há nada a actualizar.
+        if (nw.state === 'installed' && navigator.serviceWorker.controller) showUpdateBar(nw);
+      });
+    });
+  }
+
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (reloading || !hadController) return;
+      reloading = true;
+      location.reload();
+    });
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js').then(watchRegistration).catch(() => {});
+    });
+    // Cada vez que a app volta ao primeiro plano, procura uma versão nova.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && swReg) swReg.update().catch(() => {});
+    });
+  }
+
+  $('#check-update').addEventListener('click', async () => {
+    const btn = $('#check-update');
+    const old = btn.textContent;
+    btn.textContent = 'A procurar…'; btn.disabled = true;
+    try {
+      if (!swReg) throw new Error('sem registo');
+      await swReg.update();
+      await new Promise((r) => setTimeout(r, 900));
+      btn.textContent = swReg.waiting || swReg.installing ? 'Versão nova encontrada' : 'Já está actualizado';
+    } catch (e) {
+      btn.textContent = 'Não foi possível verificar';
+    }
+    setTimeout(() => { btn.textContent = old; btn.disabled = false; }, 2500);
+  });
 
   /* ---------- Arranque ---------- */
   applyTheme(); buildTicks(); drawOkArc(); renderHeader(); renderIdle(); drawHistory();

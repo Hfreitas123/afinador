@@ -95,6 +95,11 @@
     </footer>
   </div>
 
+  <div class="update-bar" id="update-bar" hidden role="status">
+    <span>Há uma versão nova do afinador.</span>
+    <button class="pill primary" id="update-now" type="button">Actualizar</button>
+  </div>
+
   <!-- Folhas (modais) -->
   <div class="sheet-backdrop" id="backdrop" hidden></div>
 
@@ -177,7 +182,10 @@
       <label class="field row"><span>Manter ecrã ligado</span><input type="checkbox" id="wakelock" checked></label>
       <label class="field row"><span>Som de confirmação ao afinar</span><input type="checkbox" id="ding"></label>
       <p class="muted small">Para guardar como app: no Safari toca em Partilhar → <b>Adicionar ao Ecrã Principal</b>. Funciona offline depois da primeira visita.</p>
-      <p class="muted small" id="version"></p>
+      <div class="field row">
+        <span class="muted small" id="version"></span>
+        <button class="pill" id="check-update" type="button">Procurar atualizações</button>
+      </div>
     </div>
   </section>
 

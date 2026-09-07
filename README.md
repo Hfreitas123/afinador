@@ -14,6 +14,19 @@ Detecta a corda automaticamente, mostra o desvio em cents e suporta afinações 
 4. Se o Safari perguntar pelo microfone de cada vez, toca em **aA** na barra de endereço →
    **Definições do site → Microfone → Permitir**.
 
+## Atualizações
+
+A app avisa-te sozinha. Quando publicas uma versão nova, ao abrir o afinador aparece uma barra
+em baixo a dizer **«Há uma versão nova do afinador»**. Tocas em **Actualizar** e ele recarrega
+já na versão nova. Enquanto não tocares, continuas a usar a versão antiga sem interrupções.
+
+A verificação é feita sempre que a app volta ao primeiro plano. Também podes forçar em
+**Definições → Procurar atualizações**, onde vês igualmente a versão instalada.
+
+> Nota: a passagem da v1.1.0 para a v1.1.1 é a única que ainda exige o método manual,
+> porque a versão instalada não tinha este mecanismo. Fecha a app pelo multitarefas
+> (desliza para cima) e abre-a duas vezes.
+
 ## Funcionalidades
 
 - **Detecção automática da corda** (modo Auto) ou selecção manual tocando na corda.
