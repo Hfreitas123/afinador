@@ -31,6 +31,11 @@
       <button class="iconbtn" id="btn-settings" aria-label="Definições">⚙︎</button>
     </header>
 
+    <p class="song-badge" id="song-badge" hidden>
+      <span id="song-badge-text"></span>
+      <button class="song-clear" id="song-clear" type="button" aria-label="Limpar música">✕</button>
+    </p>
+
     <p class="tuning-warn" id="tuning-warn" hidden>
       <span id="warn-short"></span>
       <span class="warn-full" id="warn-full"></span>
@@ -100,6 +105,13 @@
 
   <section class="sheet" id="sheet-tuning" hidden role="dialog" aria-label="Escolher afinação">
     <header><h2>Afinação</h2><button class="close" data-close>✕</button></header>
+    <div class="searchbar">
+      <span class="searchbar-icon" aria-hidden="true">🔍</span>
+      <input type="search" id="tuning-search" placeholder="Procurar afinação ou música…"
+             autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+             aria-label="Procurar afinação ou música">
+      <button class="searchbar-clear" id="search-clear" type="button" hidden aria-label="Limpar procura">✕</button>
+    </div>
     <ul class="list" id="tuning-list"></ul>
     <div class="sheet-actions">
       <button class="pill primary" id="btn-new-custom">＋ Nova afinação personalizada</button>

@@ -24,6 +24,11 @@ function freqToMidiFloat(freq, a4 = 440) {
   return 69 + 12 * Math.log2(freq / a4);
 }
 
+/** Número MIDI -> identificador de nota usado nas afinações, ex.: 61 -> "C#4". */
+function midiToNoteId(midi) {
+  return NOTE_NAMES_SHARP[((midi % 12) + 12) % 12] + (Math.floor(midi / 12) - 1);
+}
+
 function midiToName(midi, notation = 'latin', accidentals = 'sharp') {
   const idx = ((midi % 12) + 12) % 12;
   const octave = Math.floor(midi / 12) - 1;
@@ -258,5 +263,5 @@ function getTuning(instrumentId, tuningId, custom) {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { INSTRUMENTS, noteToMidi, midiToFreq, freqToMidiFloat, midiToName, getTunings, getTuning, getInstrument };
+  module.exports = { INSTRUMENTS, noteToMidi, midiToFreq, freqToMidiFloat, midiToName, midiToNoteId, getTunings, getTuning, getInstrument };
 }

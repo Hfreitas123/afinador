@@ -23,6 +23,11 @@ Detecta a corda automaticamente, mostra o desvio em cents e suporta afinações 
   guitarra portuguesa (Lisboa e Coimbra), bandolim, banjo (5 cordas e tenor), violino, viola de arco,
   violoncelo, contrabaixo, charango e balalaika.
 - **Afinações populares** por instrumento (Standard, Drop D, Drop C, meio tom abaixo, DADGAD, Open G/D/E/C/A, etc.).
+- **Procura por música:** escreves o nome (ou o artista) e a app aplica a afinação certa.
+  São **16 841 músicas de 331 artistas**, das quais 37% usam uma afinação diferente da standard.
+  A lista está embutida na app, por isso a procura funciona offline e é instantânea.
+  Quando a afinação da música corresponde a uma conhecida, aparece pelo nome (Drop D, DADGAD, …);
+  caso contrário é aplicada corda a corda. Se estiveres num baixo, é usada a afinação do baixo dessa música.
 - **Afinações de músicas**, num grupo próprio na lista. Inclui a de *Iris* dos Goo Goo Dolls
   (B1 D2 D3 D3 D4 D4, o famoso «BDDDDD» de John Rzeznik), com aviso sobre a tensão das cordas.
 - **Afinações personalizadas:** escolhes o número de cordas (1 a 12) e a nota e oitava de cada uma.
@@ -40,6 +45,10 @@ Detecta a corda automaticamente, mostra o desvio em cents e suporta afinações 
 - O microfone só funciona em **HTTPS** (o GitHub Pages já o garante).
 - Para publicar: **Settings → Pages → Source: Deploy from a branch → main / (root)**.
 - **Modo demo** sem microfone: acrescenta `?demo=110` ao endereço para simular um sinal de 110 Hz.
+- A base de músicas foi recolhida da API pública do [Songsterr](https://www.songsterr.com) e guardada
+  em `songs.js` (514 KB, 174 KB comprimidos). É gerada uma vez, não há chamadas à rede em utilização:
+  a API não envia cabeçalhos CORS, por isso o browser nunca a poderia consultar directamente.
+  Para cada música fica a afinação da faixa de guitarra mais vista e a da faixa de baixo, se existir.
 - No iPhone, enquanto o microfone está activo, o som da nota de referência pode sair mais baixo
   (limitação do iOS). Sobe o volume ou pára o afinador antes de ouvir a nota.
 
@@ -51,4 +60,5 @@ Detecta a corda automaticamente, mostra o desvio em cents e suporta afinações 
 | `app.js` | Lógica: áudio, medidor, folhas, definições, afinações personalizadas |
 | `pitch.js` | Detector YIN e suavizador |
 | `tunings.js` | Instrumentos, afinações e utilitários de notas |
+| `songs.js` | Base de dados de músicas e respectivas afinações (carregada só quando abres a procura) |
 | `sw.js`, `manifest.webmanifest`, ícones | Instalação como app e funcionamento offline |

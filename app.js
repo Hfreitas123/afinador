@@ -2,7 +2,8 @@
 'use strict';
 
 (function () {
-  const VERSION = '1.0.2';
+  const VERSION = '1.1.0';
+  const SONG_ID = '__song';
   const $ = (sel) => document.querySelector(sel);
 
   /* ---------- Estado ---------- */
@@ -18,6 +19,8 @@
     settings: { ...DEFAULT_SETTINGS },
     running: false,
     tunedFlags: [],
+    songTuning: null,   // afinação aplicada a partir de uma música, fora das listas
+    songLabel: null,    // "Título — Artista" da música activa
   };
 
   try {
@@ -26,16 +29,23 @@
     const last = JSON.parse(localStorage.getItem('afinador.last.v1') || '{}');
     if (last.instrumentId) state.instrumentId = last.instrumentId;
     if (last.tuningId) state.tuningId = last.tuningId;
+    if (last.songTuning) state.songTuning = last.songTuning;
+    if (last.songLabel) state.songLabel = last.songLabel;
+    if (state.tuningId === SONG_ID && !state.songTuning) state.tuningId = 'standard';
   } catch (e) { /* ignorar */ }
 
   function persist() {
     try {
       localStorage.setItem('afinador.settings.v1', JSON.stringify(state.settings));
-      localStorage.setItem('afinador.last.v1', JSON.stringify({ instrumentId: state.instrumentId, tuningId: state.tuningId }));
+      localStorage.setItem('afinador.last.v1', JSON.stringify({
+        instrumentId: state.instrumentId, tuningId: state.tuningId,
+        songTuning: state.songTuning, songLabel: state.songLabel,
+      }));
     } catch (e) { /* ignorar */ }
   }
 
   function currentTuning() {
+    if (state.tuningId === SONG_ID && state.songTuning) return state.songTuning;
     const t = getTuning(state.instrumentId, state.tuningId, state.custom);
     if (t.id !== state.tuningId) state.tuningId = t.id;
     return t;
@@ -134,6 +144,7 @@
     const warnEl = $('#tuning-warn');
     warnEl.hidden = !t.warn;
     warnEl.classList.remove('open');
+    renderSongBadge();
     if (t.warn) {
       // primeira frase sempre visível; o resto abre com "Ver mais"
       const cut = t.warn.indexOf('. ');
@@ -455,6 +466,126 @@
     renderStrings(i);
   });
 
+  /* ---------- Base de dados de músicas ---------- */
+  let songDb = null, songIndex = null, songLoading = null, songLoadFailed = false;
+
+  /** Carrega songs.js só quando é preciso (é o ficheiro maior da app). */
+  function loadSongs() {
+    if (songDb) return Promise.resolve(songDb);
+    if (songLoading) return songLoading;
+    songLoading = new Promise((resolve) => {
+      const sc = document.createElement('script');
+      sc.src = 'songs.js';
+      sc.onload = () => { songDb = window.SONG_DB || null; buildSongIndex(); resolve(songDb); };
+      sc.onerror = () => { songLoadFailed = true; resolve(null); };
+      document.head.appendChild(sc);
+    });
+    return songLoading;
+  }
+
+  /** Minúsculas, sem acentos nem pontuação, para comparar títulos. */
+  function norm(str) {
+    return str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ').trim();
+  }
+
+  function buildSongIndex() {
+    if (!songDb) return;
+    const an = songDb.a.map(norm);
+    songIndex = songDb.s.map((row) => {
+      const t = norm(row[1]);
+      return { t, hay: t + ' ' + an[row[0]] };
+    });
+  }
+
+  function searchSongs(query, limit) {
+    if (!songIndex) return [];
+    const nq = norm(query);
+    if (nq.length < 2) return [];
+    const toks = nq.split(' ');
+    const hits = [];
+    for (let i = 0; i < songIndex.length; i++) {
+      const e = songIndex[i];
+      let ok = true;
+      for (let k = 0; k < toks.length; k++) if (e.hay.indexOf(toks[k]) === -1) { ok = false; break; }
+      if (!ok) continue;
+      let score;
+      if (e.t === nq) score = 100;
+      else if (e.t.indexOf(nq) === 0) score = 80;
+      else if (e.t.indexOf(nq) !== -1) score = 60;
+      else score = 35;
+      score -= Math.min(15, e.t.length / 8);   // títulos curtos primeiro
+      hits.push([score, i]);
+      if (hits.length > 4000) break;
+    }
+    hits.sort((a, b) => b[0] - a[0]);
+    return hits.slice(0, limit || 40).map((h) => h[1]);
+  }
+
+  /** Índice afinação (notas MIDI) -> nome da afinação predefinida. */
+  let presetByNotes = null;
+  function buildPresetIndex() {
+    presetByNotes = {};
+    INSTRUMENTS.forEach((inst) => inst.tunings.forEach((t) => {
+      const key = t.notes.map(noteToMidi).join(',');
+      if (!(key in presetByNotes)) presetByNotes[key] = { name: t.name, instrumentId: inst.id, tuningId: t.id };
+    }));
+  }
+  function presetFor(midis) {
+    if (!presetByNotes) buildPresetIndex();
+    return presetByNotes[midis.join(',')] || null;
+  }
+  function tuningLabel(midis) {
+    const hit = presetFor(midis);
+    if (hit) return hit.name;
+    return midis.map((m) => midiToName(m, state.settings.notation, state.settings.accidentals).name).join(' ');
+  }
+
+  const isBassInstrument = (id) => id === 'bass' || id === 'bass5' || id === 'bass6' || id === 'double-bass';
+
+  /** Aplica a afinação de uma música: usa a predefinida equivalente, se existir. */
+  function applySong(row) {
+    const artist = songDb.a[row[0]], title = row[1];
+    const gi = row[2], bi = row[3];
+    let midis = null, family = 'guitar';
+    if (isBassInstrument(state.instrumentId) && bi >= 0) { midis = songDb.t[bi]; family = 'bass'; }
+    else if (gi >= 0) { midis = songDb.t[gi]; family = 'guitar'; }
+    else if (bi >= 0) { midis = songDb.t[bi]; family = 'bass'; }
+    if (!midis) return;
+
+    const hit = presetFor(midis);
+    if (hit) {
+      state.songTuning = null;
+      state.instrumentId = hit.instrumentId;
+      state.tuningId = hit.tuningId;
+    } else {
+      const n = midis.length;
+      state.instrumentId = family === 'bass'
+        ? (n >= 6 ? 'bass6' : n === 5 ? 'bass5' : 'bass')
+        : (n === 7 ? 'guitar7' : n === 8 ? 'guitar8' : n >= 10 ? 'guitar12' : 'guitar');
+      state.songTuning = {
+        id: SONG_ID, name: title, notes: midis.map(midiToNoteId),
+        desc: midis.map((m) => midiToName(m, state.settings.notation, state.settings.accidentals).name).join(' '),
+        song: true,
+      };
+      state.tuningId = SONG_ID;
+    }
+    state.songLabel = title + ' — ' + artist + (family === 'bass' ? ' (baixo)' : '');
+    afterTuningChange();
+  }
+
+  function renderSongBadge() {
+    const el = $('#song-badge');
+    el.hidden = !state.songLabel;
+    if (state.songLabel) $('#song-badge-text').textContent = '🎵 ' + state.songLabel;
+  }
+  // O ✕ apenas dispensa o aviso: a afinação escolhida mantém-se.
+  $('#song-clear').addEventListener('click', () => {
+    state.songLabel = null;
+    persist();
+    renderSongBadge();
+  });
+
   /* ---------- Folhas ---------- */
   const backdrop = $('#backdrop');
   function openSheet(id) {
@@ -472,10 +603,13 @@
   function setInstrument(id) {
     state.instrumentId = id;
     const list = getTunings(id, state.custom);
-    if (!list.some((t) => t.id === state.tuningId)) state.tuningId = list[0].id;
+    if (!list.some((t) => t.id === state.tuningId)) {
+      state.tuningId = list[0].id;
+      state.songTuning = null; state.songLabel = null;
+    }
     afterTuningChange();
   }
-  function setTuning(id) { state.tuningId = id; afterTuningChange(); }
+  function setTuning(id) { state.tuningId = id; state.songTuning = null; state.songLabel = null; afterTuningChange(); }
   function afterTuningChange() {
     state.selectedString = null; state.tunedFlags = []; dingPlayedFor = -1;
     persist(); renderHeader(); rebuildDetector(); renderIdle();
@@ -488,27 +622,84 @@
       </button></li>`).join('');
     $('#instrument-list').querySelectorAll('.item').forEach((b) => b.addEventListener('click', () => { setInstrument(b.dataset.id); closeSheets(); }));
   }
-  function renderTuningList() {
+  function songRow(idx) {
+    const row = songDb.s[idx];
+    const gi = row[2], bi = row[3];
+    const useBass = isBassInstrument(state.instrumentId) && bi >= 0;
+    const midis = songDb.t[useBass ? bi : (gi >= 0 ? gi : bi)];
+    return `<li><button class="item song" data-song="${idx}">
+        <span class="ico">🎵</span>
+        <span class="txt"><strong>${esc(row[1])}</strong><span>${esc(songDb.a[row[0]])} · ${esc(tuningLabel(midis))}</span></span>
+      </button></li>`;
+  }
+
+  const esc = (str) => String(str).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  function renderTuningList(query) {
+    const q = (query === undefined ? $('#tuning-search').value : query).trim();
     const list = getTunings(state.instrumentId, state.custom);
-    const preset = list.filter((t) => !t.custom && !t.song);
-    const songs = list.filter((t) => t.song);
-    const mine = list.filter((t) => t.custom);
     const item = (t) => `<li><button class="item ${t.id === state.tuningId ? 'selected' : ''}" data-id="${t.id}">
-        <span class="txt"><strong>${t.name}</strong><span>${t.desc}</span></span>
+        <span class="txt"><strong>${esc(t.name)}</strong><span>${esc(t.desc)}</span></span>
         ${t.custom ? `<span class="edit" data-edit="${t.id}" role="button" aria-label="Editar">✎</span>` : ''}
       </button></li>`;
-    let html = preset.map(item).join('');
-    if (songs.length) html += `<li class="section">Afinações de músicas</li>` + songs.map(item).join('');
-    if (mine.length) html += `<li class="section">Personalizadas</li>` + mine.map(item).join('');
+    let html = '';
+
+    if (!q) {
+      const preset = list.filter((t) => !t.custom && !t.song);
+      const songs = list.filter((t) => t.song);
+      const mine = list.filter((t) => t.custom);
+      html = preset.map(item).join('');
+      if (songs.length) html += `<li class="section">Afinações de músicas</li>` + songs.map(item).join('');
+      if (mine.length) html += `<li class="section">Personalizadas</li>` + mine.map(item).join('');
+    } else {
+      const nq = norm(q);
+      const matches = list.filter((t) => norm(t.name).indexOf(nq) !== -1 || norm(t.desc || '').indexOf(nq) !== -1);
+      if (matches.length) html += `<li class="section">Afinações</li>` + matches.map(item).join('');
+      if (songLoadFailed) {
+        html += `<li class="section">Músicas</li><li class="empty">Não foi possível carregar a lista de músicas.</li>`;
+      } else if (!songDb) {
+        html += `<li class="section">Músicas</li><li class="empty">A carregar músicas…</li>`;
+        loadSongs().then(() => { if (!$('#sheet-tuning').hidden) renderTuningList(); });
+      } else {
+        const hits = searchSongs(q, 40);
+        html += `<li class="section">Músicas</li>`;
+        html += hits.length ? hits.map(songRow).join('')
+          : `<li class="empty">Nenhuma música encontrada para “${esc(q)}”.</li>`;
+      }
+      if (!matches.length && !html) html = `<li class="empty">Sem resultados.</li>`;
+    }
+
     $('#tuning-list').innerHTML = html;
     $('#tuning-list').querySelectorAll('.item').forEach((b) => b.addEventListener('click', (ev) => {
       const edit = ev.target.closest('[data-edit]');
       if (edit) { openCustomEditor(edit.dataset.edit); return; }
+      if (b.dataset.song !== undefined) {
+        applySong(songDb.s[parseInt(b.dataset.song, 10)]);
+        closeSheets();
+        return;
+      }
       setTuning(b.dataset.id); closeSheets();
     }));
   }
+
   $('#btn-instrument').addEventListener('click', () => { renderInstrumentList(); openSheet('#sheet-instrument'); });
-  $('#btn-tuning').addEventListener('click', () => { renderTuningList(); openSheet('#sheet-tuning'); });
+  $('#btn-tuning').addEventListener('click', () => {
+    $('#tuning-search').value = '';
+    $('#search-clear').hidden = true;
+    renderTuningList('');
+    openSheet('#sheet-tuning');
+    loadSongs();   // pré-carrega para a procura ser instantânea
+  });
+  $('#tuning-search').addEventListener('input', (e) => {
+    $('#search-clear').hidden = !e.target.value;
+    renderTuningList(e.target.value);
+  });
+  $('#search-clear').addEventListener('click', () => {
+    $('#tuning-search').value = '';
+    $('#search-clear').hidden = true;
+    renderTuningList('');
+    $('#tuning-search').focus();
+  });
   $('#btn-new-custom').addEventListener('click', () => openCustomEditor(null));
 
   /* ---------- Editor de afinação personalizada ---------- */
