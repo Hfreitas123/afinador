@@ -2,7 +2,7 @@
 'use strict';
 
 (function () {
-  const VERSION = '1.1.1';
+  const VERSION = '1.1.2';
   const SONG_ID = '__song';
   const $ = (sel) => document.querySelector(sel);
 
@@ -226,11 +226,13 @@
   }
 
   /* ---------- Áudio ---------- */
-  let audioCtx = null, analyser = null, stream = null, sourceNode = null, demoOsc = null;
-  let detector = null, buf = null, byteBuf = null, rafId = 0, lastDetect = 0, silentSink = null, silentFrames = 0;
+  let audioCtx = null, analyser = null, stream = null, sourceNode = null, demoOsc = null, graphSink = null;
+  let detector = null, buf = null, byteBuf = null, rafId = 0, lastDetect = 0, silentFrames = 0;
+  let graphMode = 'stream', healing = false;
   const smoother = new MedianSmoother(5);
   let lastGoodAt = 0, lastReading = null, okStreak = 0, dingPlayedFor = -1;
   const demoParam = new URLSearchParams(location.search).get('demo');
+  const LISTENING = 'A ouvir… toca uma corda de cada vez.';
 
   function rmsThreshold() {
     // 0 -> 0.05 (pouco sensível) ... 100 -> ~0.001 (muito sensível)
@@ -238,7 +240,7 @@
   }
 
   function rebuildDetector() {
-    if (!audioCtx) return;
+    if (!audioCtx || !analyser) return;
     const tg = targets();
     const lo = Math.min(...tg.map((t) => t.freq)) / 1.6;
     const hi = Math.max(...tg.map((t) => t.freq)) * 2.5;
@@ -259,49 +261,106 @@
     return audioCtx;
   }
 
+  /**
+   * O Safari só processa nós ligados a um destino. Usamos um destino de MediaStream,
+   * que não produz som: ligar ao altifalante (audioCtx.destination) enquanto o microfone
+   * está aberto põe o iOS em "play and record", ou seja, som pelo auscultador e volume
+   * de chamada. Se este caminho não gerar dados, passamos ao destino normal (ver heal()).
+   */
+  function buildGraph() {
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 4096;
+    analyser.smoothingTimeConstant = 0;
+    graphSink = audioCtx.createMediaStreamDestination();
+    analyser.connect(graphSink);
+    graphMode = 'stream';
+    buf = new Float32Array(analyser.fftSize);
+    // ?route=speaker força a rota alternativa, para diagnóstico.
+    byteBuf = analyser.getFloatTimeDomainData ? null : new Uint8Array(analyser.fftSize);
+    if (new URLSearchParams(location.search).get('route') === 'speaker') useSpeakerGraph();
+  }
+
+  function useSpeakerGraph() {
+    if (graphMode === 'speaker' || !analyser) return;
+    try { analyser.disconnect(); } catch (e) {}
+    try { graphSink.disconnect(); } catch (e) {}
+    const mute = audioCtx.createGain();
+    mute.gain.value = 0;
+    analyser.connect(mute).connect(audioCtx.destination);
+    graphSink = mute;
+    graphMode = 'speaker';
+    silentFrames = 0;
+  }
+
+  async function openMic() {
+    if (demoParam !== null) {
+      demoOsc = audioCtx.createOscillator();
+      demoOsc.type = 'sawtooth';
+      demoOsc.frequency.value = parseFloat(demoParam) || 110;
+      const g = audioCtx.createGain(); g.gain.value = 0.2;
+      demoOsc.connect(g).connect(analyser);
+      demoOsc.start();
+      window.__setDemoFreq = (f) => { demoOsc.frequency.value = f; };
+      return;
+    }
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+    });
+    // Depois de obter o microfone o iOS pode ter suspendido o contexto: retomar de novo.
+    if (audioCtx.state !== 'running') await audioCtx.resume();
+    sourceNode = audioCtx.createMediaStreamSource(stream);
+    sourceNode.connect(analyser);
+    stream.getAudioTracks().forEach((t) => {
+      t.onended = () => { if (state.running) restartCapture(); };
+    });
+    silentFrames = 0;
+  }
+
+  function closeMic() {
+    if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }
+    if (sourceNode) { try { sourceNode.disconnect(); } catch (e) {} sourceNode = null; }
+    if (demoOsc) { try { demoOsc.stop(); demoOsc.disconnect(); } catch (e) {} demoOsc = null; }
+  }
+
+  /**
+   * Volta a pedir o microfone. O iOS corta a pista quando a app vai para segundo plano
+   * e não a devolve viva: sem isto, ao regressar o afinador ficava mudo.
+   */
+  async function restartCapture() {
+    if (!state.running || healing || demoParam !== null) return;
+    healing = true;
+    try {
+      closeMic();
+      await audioCtx.resume();
+      await openMic();
+      smoother.reset();
+      silentFrames = 0;
+      $('#hint').classList.remove('error');
+      $('#hint').textContent = LISTENING;
+    } catch (err) {
+      $('#hint').classList.add('error');
+      $('#hint').textContent = 'O microfone deixou de estar disponível. Toca em Iniciar outra vez.';
+      stop();
+    } finally {
+      healing = false;
+    }
+  }
+
   async function start() {
     const hint = $('#hint');
     hint.classList.remove('error');
     try {
       ensureContext();
       await audioCtx.resume();
-      if (demoParam === null) {
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-        });
-      }
-      // Depois de obter o microfone o iOS pode ter suspendido o contexto: retomar de novo.
-      if (audioCtx.state !== 'running') await audioCtx.resume();
-
-      analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 4096;
-      analyser.smoothingTimeConstant = 0;
-      // O Safari só processa nós que cheguem ao destino: liga o analisador a um ganho mudo.
-      silentSink = audioCtx.createGain();
-      silentSink.gain.value = 0;
-      analyser.connect(silentSink).connect(audioCtx.destination);
-
-      if (demoParam !== null) {
-        demoOsc = audioCtx.createOscillator();
-        demoOsc.type = 'sawtooth';
-        demoOsc.frequency.value = parseFloat(demoParam) || 110;
-        const g = audioCtx.createGain(); g.gain.value = 0.2;
-        demoOsc.connect(g).connect(analyser);
-        demoOsc.start();
-        window.__setDemoFreq = (f) => { demoOsc.frequency.value = f; };
-        hint.textContent = `Modo demo: sinal sintético de ${demoOsc.frequency.value} Hz.`;
-      } else {
-        sourceNode = audioCtx.createMediaStreamSource(stream);
-        sourceNode.connect(analyser);
-        stream.getAudioTracks().forEach((t) => { t.onended = () => { if (state.running) { stop(); hint.textContent = 'O microfone foi desligado pelo sistema. Toca em Iniciar outra vez.'; } }; });
-        hint.textContent = 'A ouvir… toca uma corda de cada vez.';
-      }
-      buf = new Float32Array(analyser.fftSize);
-      byteBuf = analyser.getFloatTimeDomainData ? null : new Uint8Array(analyser.fftSize);
+      buildGraph();
+      await openMic();
       rebuildDetector();
       state.running = true;
       state.tunedFlags = [];
       silentFrames = 0;
+      hint.textContent = demoParam !== null
+        ? `Modo demo: sinal sintético de ${demoOsc.frequency.value} Hz.`
+        : LISTENING;
       $('#btn-start').textContent = '■ Parar';
       $('#btn-start').classList.add('running');
       requestWakeLock();
@@ -325,10 +384,9 @@
   function stop() {
     state.running = false;
     cancelAnimationFrame(rafId);
-    if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }
-    if (sourceNode) { try { sourceNode.disconnect(); } catch (e) {} sourceNode = null; }
-    if (demoOsc) { try { demoOsc.stop(); demoOsc.disconnect(); } catch (e) {} demoOsc = null; }
-    if (silentSink) { try { silentSink.disconnect(); } catch (e) {} silentSink = null; }
+    closeMic();
+    if (analyser) { try { analyser.disconnect(); } catch (e) {} }
+    if (graphSink) { try { graphSink.disconnect(); } catch (e) {} graphSink = null; }
     setLevel(0);
     releaseWakeLock();
     $('#btn-start').textContent = '🎤 Iniciar afinador';
@@ -353,12 +411,20 @@
     setLevel(res.rms);
     // Diagnóstico: se o contexto adormeceu ou o sinal é sempre zero absoluto, avisar
     if (res.rms === 0) {
+      // Silêncio absoluto não é ambiente calado, é sinal que não chega. Recupera por etapas.
       silentFrames++;
-      if (silentFrames === 60) {
-        if (audioCtx.state !== 'running') audioCtx.resume().catch(() => {});
+      if (audioCtx.state !== 'running') audioCtx.resume().catch(() => {});
+      if (silentFrames === 45) useSpeakerGraph();
+      else if (silentFrames === 130) restartCapture();
+      else if (silentFrames === 260) {
+        $('#hint').classList.add('error');
         $('#hint').textContent = 'Não chega som do microfone. Verifica se outra app o está a usar e se o Safari tem permissão (Definições → Safari → Microfone).';
       }
-    } else if (silentFrames) { silentFrames = 0; if (demoParam === null) $('#hint').textContent = 'A ouvir… toca uma corda de cada vez.'; }
+    } else if (silentFrames) {
+      silentFrames = 0;
+      $('#hint').classList.remove('error');
+      if (demoParam === null) $('#hint').textContent = LISTENING;
+    }
     const good = res.freq > 0 && res.rms >= rmsThreshold() && res.probability >= 0.65;
     if (good) {
       const midiFloat = smoother.push(freqToMidiFloat(res.freq, state.settings.a4));
@@ -408,8 +474,15 @@
 
   /* ---------- Nota de referência ---------- */
   let tonePlaying = false, toneTimer = 0;
+  /**
+   * Toca a nota de referência. Enquanto o microfone está aberto o iOS encaminha o som
+   * para o auscultador, com volume de chamada, por isso fechamos a captura durante a
+   * nota e voltamos a abri-la a seguir.
+   */
   function playTone(freq, duration = 1.6) {
     ensureContext();
+    const hadMic = state.running && demoParam === null && !!stream;
+    if (hadMic) closeMic();
     audioCtx.resume();
     const t0 = audioCtx.currentTime;
     const master = audioCtx.createGain();
@@ -429,7 +502,12 @@
     });
     tonePlaying = true;
     clearTimeout(toneTimer);
-    toneTimer = setTimeout(() => { tonePlaying = false; smoother.reset(); }, duration * 1000 + 150);
+    toneTimer = setTimeout(() => {
+      tonePlaying = false;
+      smoother.reset();
+      silentFrames = 0;
+      if (hadMic && state.running) openMic().catch(() => restartCapture());
+    }, duration * 1000 + 150);
   }
   function playDing() {
     ensureContext();
@@ -448,7 +526,10 @@
   }
   function releaseWakeLock() { if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; } }
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && state.running) { requestWakeLock(); audioCtx?.resume(); }
+    if (document.visibilityState !== 'visible' || !state.running) return;
+    requestWakeLock();
+    audioCtx?.resume();
+    restartCapture();   // o iOS mata a pista do microfone em segundo plano
   });
 
   /* ---------- Selecção de cordas ---------- */
@@ -815,6 +896,14 @@
     const open = $('#tuning-warn').classList.toggle('open');
     $('#warn-toggle').textContent = open ? 'Ver menos' : 'Ver mais';
   });
+
+  // Diagnóstico, activo só com ?debug ou ?demo no endereço.
+  if (demoParam !== null || new URLSearchParams(location.search).has('debug')) {
+    window.__afinador = () => ({
+      version: VERSION, graphMode, running: state.running,
+      hasStream: !!stream, ctx: audioCtx && audioCtx.state, silentFrames,
+    });
+  }
 
   /* ---------- Iniciar / parar ---------- */
   $('#btn-start').addEventListener('click', () => (state.running ? stop() : start()));

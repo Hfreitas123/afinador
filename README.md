@@ -62,8 +62,19 @@ A verificação é feita sempre que a app volta ao primeiro plano. Também podes
   em `songs.js` (514 KB, 174 KB comprimidos). É gerada uma vez, não há chamadas à rede em utilização:
   a API não envia cabeçalhos CORS, por isso o browser nunca a poderia consultar directamente.
   Para cada música fica a afinação da faixa de guitarra mais vista e a da faixa de baixo, se existir.
-- No iPhone, enquanto o microfone está activo, o som da nota de referência pode sair mais baixo
-  (limitação do iOS). Sobe o volume ou pára o afinador antes de ouvir a nota.
+- **Encaminhamento do som no iOS.** Se uma página capta o microfone e ao mesmo tempo envia som
+  para o altifalante, o iOS passa a sessão para «play and record»: o som sai pelo auscultador e
+  o telemóvel mostra volume de chamada. Para evitar isso, o analisador é ligado a um
+  `MediaStreamAudioDestinationNode`, que mantém o grafo activo sem qualquer saída de som.
+  Se essa rota não produzir dados, a app passa sozinha para a rota normal ao fim de ~1,5 s
+  (`?route=speaker` força-a, para diagnóstico).
+- **Nota de referência.** Pela mesma razão, a captura é fechada enquanto a nota toca e reaberta
+  a seguir, para o som sair pelo altifalante com volume normal.
+- **Regresso do segundo plano.** O iOS corta a pista do microfone quando a app sai de vista e não
+  a devolve viva. Ao voltar ao primeiro plano a captura é reposta do zero. Há ainda uma
+  recuperação automática se o sinal for silêncio absoluto: troca de rota, depois nova captura,
+  e só então uma mensagem de erro.
+- `?debug` no endereço expõe `window.__afinador()` com a versão, a rota de áudio e o estado do contexto.
 
 ## Ficheiros
 
